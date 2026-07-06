@@ -6,6 +6,7 @@ pipeline {
       IMAGE_TAG = "${BUILD_NUMBER}"
     }
 
+
     stages {
         stage('Checkout') {
             steps {
@@ -34,6 +35,33 @@ pipeline {
             }
         }
 
+        stage('SonarQube Analysis'){
+            steps{
+                dir('june-batch-cicd'){
+                    script{
+                    def scannerHome = tool (
+                      name: 'sonar-scanner',
+                      type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+                      )
+
+                    withSonarQubeEnv('sonarqube') {
+                      sh "${scannerHome}/bin/sonar-scanner"
+                    }
+                  }
+                }
+            }
+        }
+
+        stage('Quality Gate'){
+            steps{
+                dir('june-batch-cicd'){
+                    timeout(time: 5, unit: 'MINUTES') {
+                      waitForQualityGate abortPipeline: true
+                    }
+                }
+            }
+        }
+
         stage('Build Application') {
             steps{
                 dir('june-batch-cicd') {
@@ -54,6 +82,18 @@ pipeline {
             steps{
                 dir('june-batch-cicd') {
                     sh 'docker build -t $IMAGE_NAME:$IMAGE_TAG .'
+                }
+            }
+        }
+
+        stage('Trivy Scan'){
+            steps{
+                script {
+                    // Downloads the standalone binary directly to the workspace without needing root access
+                    sh 'curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b .'
+                    
+                    // Execute the scan using the local binary (./trivy)
+                    sh './trivy image $IMAGE_NAME:$IMAGE_TAG'
                 }
             }
         }

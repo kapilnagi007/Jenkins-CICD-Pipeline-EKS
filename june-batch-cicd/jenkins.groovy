@@ -86,15 +86,19 @@ pipeline {
             }
         }
 
-        stage('Trivy Scan'){
-            steps{
-                script {
-                    // Downloads the standalone binary directly to the workspace without needing root access
-                    sh 'curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b .'
-                    
-                    // Execute the scan using the local binary (./trivy)
-                    sh './trivy image $IMAGE_NAME:$IMAGE_TAG'
-                }
+        stage('Trivy Scan') {
+            steps {
+                sh """
+                mkdir -p \$WORKSPACE/.trivycache
+        
+                docker run --rm \
+                -v \$WORKSPACE/.trivycache:/root/.cache/trivy \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                aquasec/trivy:latest image \
+                --scanners vuln \
+                --severity HIGH,CRITICAL \
+                kopilnagi/june-batch-cicd:${BUILD_NUMBER}
+                """
             }
         }
 

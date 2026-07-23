@@ -2,138 +2,205 @@ pipeline {
     agent any
 
     environment {
-      IMAGE_NAME = "kopilnagi/june-batch-cicd"
-      IMAGE_TAG = "${BUILD_NUMBER}"
+        IMAGE_NAME = "kopilnagi/june-batch-cicd"
+        IMAGE_TAG  = "${BUILD_NUMBER}"
+        GIT_REPO   = "https://github.com/kapilnagi007/June-StaticWebsiteHost.git"
+        GIT_BRANCH = "main"
     }
 
-
     stages {
+
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                url: 'https://github.com/kapilnagi007/June-StaticWebsiteHost.git'
+                git branch: "${GIT_BRANCH}",
+                    url: "${GIT_REPO}"
             }
         }
 
         stage('Debug') {
-            steps{
+            steps {
                 dir('june-batch-cicd') {
-                    sh 'pwd'
-                    sh 'ls -la'
-                    sh 'find . -name package.json'
-                    sh 'node -v'
-                    sh 'npm -v'
+                    sh '''
+                    pwd
+                    ls -la
+                    node -v
+                    npm -v
+                    docker --version
+                    '''
                 }
             }
         }
 
         stage('Install Dependencies') {
-            steps{
+            steps {
                 dir('june-batch-cicd') {
                     sh 'npm install'
                 }
             }
         }
 
-        stage('SonarQube Analysis'){
-            steps{
-                dir('june-batch-cicd'){
-                    script{
-                    def scannerHome = tool (
-                      name: 'sonar-scanner',
-                      type: 'hudson.plugins.sonar.SonarRunnerInstallation'
-                      )
+        stage('SonarQube Analysis') {
+            steps {
+                dir('june-batch-cicd') {
+                    script {
 
-                    withSonarQubeEnv('sonarqube') {
-                      sh "${scannerHome}/bin/sonar-scanner"
+                        def scannerHome = tool(
+                            name: 'sonar-scanner',
+                            type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+                        )
+
+                        withSonarQubeEnv('sonarqube') {
+                            sh "${scannerHome}/bin/sonar-scanner"
+                        }
+
                     }
-                  }
                 }
             }
         }
 
-        stage('Quality Gate'){
-            steps{
-                dir('june-batch-cicd'){
-                    timeout(time: 5, unit: 'MINUTES') {
-                      waitForQualityGate abortPipeline: true
-                    }
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
 
         stage('Build Application') {
-            steps{
+            steps {
                 dir('june-batch-cicd') {
-                    sh 'npm run build'    
+                    sh 'npm run build'
                 }
             }
         }
 
-        stage('Test Application') {
-            steps{
+        stage('Run Tests') {
+            steps {
                 dir('june-batch-cicd') {
-                    sh 'npm test -- --watchAll==false'    
+                    sh 'CI=true npm test -- --watchAll=false'
                 }
             }
         }
 
-        stage('Build Docker Image'){
-            steps{
+        stage('Build Docker Image') {
+            steps {
                 dir('june-batch-cicd') {
-                    sh 'docker build -t $IMAGE_NAME:$IMAGE_TAG .'
+
+                    sh """
+                    docker build \
+                    -t ${IMAGE_NAME}:${IMAGE_TAG} \
+                    -t ${IMAGE_NAME}:latest .
+                    """
+
                 }
             }
         }
 
         stage('Trivy Scan') {
             steps {
+
                 sh """
                 mkdir -p \$WORKSPACE/.trivycache
-        
+
                 docker run --rm \
                 -v \$WORKSPACE/.trivycache:/root/.cache/trivy \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 aquasec/trivy:latest image \
-                --scanners vuln \
                 --severity HIGH,CRITICAL \
-                kopilnagi/june-batch-cicd:${BUILD_NUMBER}
+                ${IMAGE_NAME}:${IMAGE_TAG}
                 """
+
             }
         }
 
-        stage('Push Image') {
-          steps {
-            dir('june-batch-cicd') {
-              withCredentials([
-                  usernamePassword(
-                    credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                  )
-                ])
-                {
-                  sh '''
-                  echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                  docker push $IMAGE_NAME:$IMAGE_TAG
-                  '''
-                }  
+        stage('Push Docker Image') {
+            steps {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+
+                    sh """
+                    echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+
+                    docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                    docker push ${IMAGE_NAME}:latest
+                    """
+
+                }
             }
-            
-          }
         }
 
-        stage('Deploy'){
-          steps {
-            dir('june-batch-cicd') {
-                sh '''
-                docker stop react-app || true
-                docker rm react-app || true
+        stage('Update Kubernetes Manifest') {
+            steps {
 
-                docker run -d --name react-app -p 80:80 $IMAGE_NAME:$IMAGE_TAG
-                '''
+                dir('june-batch-cicd') {
+
+                    sh """
+                    sed -i.bak 's#image: .*#image: ${IMAGE_NAME}:${IMAGE_TAG}#' k8s/deployment.yaml
+                    rm -f k8s/deployment.yaml.bak
+                    """
+
+                }
             }
-          }
         }
+
+        stage('Commit & Push Manifest') {
+
+            steps {
+
+                dir('.') {
+
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'github-creds',
+                            usernameVariable: 'GIT_USER',
+                            passwordVariable: 'GIT_PASS'
+                        )
+                    ]) {
+
+                        sh """
+
+                        git config user.name "Jenkins"
+
+                        git config user.email "jenkins@local"
+
+                        git add june-batch-cicd/k8s/deployment.yaml
+
+                        git commit -m "Update image to ${IMAGE_TAG}" || true
+
+                        git push https://\$GIT_USER:\$GIT_PASS@github.com/kapilnagi007/June-StaticWebsiteHost.git HEAD:main
+
+                        """
+
+                    }
+
+                }
+
+            }
+
+        }
+
+    }
+
+    post {
+
+        success {
+            echo "Application image pushed successfully."
+            echo "Argo CD will automatically sync the new version."
+        }
+
+        failure {
+            echo "Pipeline Failed"
+        }
+
+        always {
+            cleanWs()
+        }
+
     }
 }

@@ -10,15 +10,17 @@ spec:
 
   source:
     repoURL: https://github.com/kapilnagi007/June-StaticWebsiteHost.git
-    targetRevision: HEAD
-    path: .
+    targetRevision: main
+    path: june-batch-cicd/k8s
 
-  destination: 
-    server: http://kubernetes.default.svc
+  destination:
+    server: https://kubernetes.default.svc
     namespace: default
 
   syncPolicy:
-     automated:
-      selfHeal: true
+    automated:
       prune: true
+      selfHeal: true
 
+    syncOptions:
+      - CreateNamespace=true

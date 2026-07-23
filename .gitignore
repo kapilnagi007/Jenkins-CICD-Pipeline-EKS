@@ -143,7 +143,7 @@ vite.config.ts.timestamp-*
 .vite/
 
 # Terraform
-**/s.terrafrom/
+**/.terrafrom/
 
 # Terraform state files
 *.tfstate
@@ -152,3 +152,6 @@ vite.config.ts.timestamp-*
 # Terraform plan files
 *.tfplan
 *.tfplan
+*.tfvars
+
+!.terraform.lock.hcl

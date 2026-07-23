@@ -2,7 +2,7 @@ terraform {
 
   backend "s3" {
 
-    bucket = "kapil-terraform-state"
+    bucket = "innerpeace-terraform-state-ap-south-1-cicd-project"
 
     key = "eks/terraform.tfstate"
 

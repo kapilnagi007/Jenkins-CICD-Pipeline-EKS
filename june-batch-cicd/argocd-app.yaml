@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+
+metadata:
+  name: react-app
+  namespace: argocd
+
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kapilnagi007/June-StaticWebsiteHost.git
+    targetRevision: HEAD
+    path: .
+
+  destination: 
+    server: http://kubernetes.default.svc
+    namespace: default
+
+  syncPolicy:
+     automated:
+      selfHeal: true
+      prune: true
+
